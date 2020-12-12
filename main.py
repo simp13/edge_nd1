@@ -32,6 +32,7 @@ import paho.mqtt.client as mqtt
 
 from argparse import ArgumentParser
 from inference import Network, preprocess_image, draw_bboxes
+import logging
 
 
 # MQTT server environment variables
@@ -51,8 +52,9 @@ def build_argparser():
     parser = ArgumentParser()
     parser.add_argument("-m", "--model", required=True, type=str,
                         help="Path to an xml file with a trained model.")
-    parser.add_argument("-i", "--input", required=True, type=str,
+    parser.add_argument("-i", "--input", required=False, type=str,
                         help="Path to image or video file")
+    parser.add_argument("-w","--webcam",type=int,help="Webcam number to use")
     parser.add_argument("-l", "--cpu_extension", required=False, type=str,
                         default=None,
                         help="MKLDNN (CPU)-targeted custom layers."
@@ -96,7 +98,12 @@ def infer_on_stream(args, client):
     infer_network.load_model()
 
     ### TODO: Handle the input stream ###
-    vc = cv2.VideoCapture(args.input)
+    if args.webcam != None:
+        vc = cv2.VideoCapture(args.webcam)
+    else:
+        # handle the video or image with -i resources/image_0100.jpeg or .mp4
+        vc = cv2.VideoCapture(args.input)
+
     if not vc.isOpened():
         logging.error(f"Error opening input file (video or image {args.input})")
         exit(1)
@@ -105,7 +112,9 @@ def infer_on_stream(args, client):
 
     last_count = 0
     total_count = 0
+    predict_time_count = 0
     input_shape = infer_network.get_input_shape()
+
     while does_got_frame:
         image = preprocess_image(frame,input_shape[3],input_shape[2])
 
@@ -113,17 +122,23 @@ def infer_on_stream(args, client):
         detections = infer_network.wait(infer_request_handle)
         detections = infer_network.get_output(detections)
         current_count = detections['num_detections']
+        predict_time_count += 1
+
         if current_count > last_count and last_count == 0:
             start_time = vc.get(cv2.CAP_PROP_POS_MSEC)
             total_count = total_count + current_count - last_count
-        if current_count < last_count and current_count == 0:
+        
+        if current_count < last_count and current_count == 0 and predict_time_count >= 3:
             # Person duration in the video is calculated
             duration = int((vc.get(cv2.CAP_PROP_POS_MSEC) - start_time) / 1000.0)
             # Publish messages to the MQTT server
             client.publish("person/duration",
                            json.dumps({"duration": duration}))
 
-        last_count = current_count
+        if predict_time_count >= 5:
+            last_count = current_count
+            predict_time_count = 0
+
         client.publish("person", json.dumps({"count": current_count,
                                              "total": total_count}))
 
@@ -142,7 +157,7 @@ def infer_on_stream(args, client):
 
         ### Write an output image if `single_image_mode` ###
         if vc.get(cv2.CAP_PROP_FRAME_COUNT) == 1.0:
-            cv2.imwrite('ov_od.png', img)
+            cv2.imwrite('detected.png', img)
 
         ### Read from the video capture ###
         does_got_frame, frame = vc.read()

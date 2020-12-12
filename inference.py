@@ -70,11 +70,11 @@ class Network:
         ### TODO: Return the shape of the input layer ###
         return self.net.inputs[self.input_blob].shape
 
-    def async_exec_net(self,batch):
+    def async_exec_net(self,batch,request_id=0):
         ### TODO: Start an asynchronous request ###
         ### TODO: Return any necessary information ###
         ### Note: You may need to update the function parameters. ###
-        infer_request_handle = self.exec_net.start_async(request_id=0,inputs={self.input_blob: batch})
+        infer_request_handle = self.exec_net.start_async(request_id=request_id,inputs={self.input_blob: batch})
         return infer_request_handle
 
     def wait(self,infer_request_handle):
