@@ -110,11 +110,15 @@ def infer_on_stream(args, client):
     
     does_got_frame,frame = vc.read()
 
-    last_count = 0
-    total_count = 0
-    predict_time_count = 0
-    input_shape = infer_network.get_input_shape()
+    # last_count = 0
+    
+    # predict_time_count = 0
 
+    person_in_frame = False
+    real_count = 0
+    total_count = 0
+    input_shape = infer_network.get_input_shape()
+    
     while does_got_frame:
         image = preprocess_image(frame,input_shape[3],input_shape[2])
 
@@ -122,30 +126,49 @@ def infer_on_stream(args, client):
         detections = infer_network.wait(infer_request_handle)
         detections = infer_network.get_output(detections)
         current_count = detections['num_detections']
-        predict_time_count += 1
+        # predict_time_count += 1
 
-        if current_count > last_count and last_count == 0:
-            start_time = vc.get(cv2.CAP_PROP_POS_MSEC)
-            total_count = total_count + current_count - last_count
+        # if current_count > last_count and last_count == 0:
+        #     start_time = vc.get(cv2.CAP_PROP_POS_MSEC)
+        #     total_count = total_count + current_count - last_count
         
-        if current_count < last_count and current_count == 0 and predict_time_count >= 3:
-            # Person duration in the video is calculated
-            duration = int((vc.get(cv2.CAP_PROP_POS_MSEC) - start_time) / 1000.0)
-            # Publish messages to the MQTT server
-            client.publish("person/duration",
-                           json.dumps({"duration": duration}))
+        # if current_count < last_count and current_count == 0 and predict_time_count >= 3:
+        #     # Person duration in the video is calculated
+        #     duration = int((vc.get(cv2.CAP_PROP_POS_MSEC) - start_time) / 1000.0)
+        #     # Publish messages to the MQTT server
+        #     client.publish("person/duration",
+        #                    json.dumps({"duration": duration}))
+        
+        # when person exit frame
+        if current_count == 0:
+            if person_in_frame:
+                miss_count += 1
+                if miss_count > 20:
+                    real_count -= 1
+                    miss_count = 0
+                    duration = int(time.time() - start_time)
+                    client.publish("person/duration",json.dumps({"duration": duration}))
+                    person_in_frame = False 
+        else:
+            miss_count = 0
+            if real_count == 0:
+                real_count += 1
+                total_count += 1
+                start_time = time.time()
+                person_in_frame = True 
+                client.publish("person", json.dumps({"total": total_count}))
 
-        if predict_time_count >= 5:
-            last_count = current_count
-            predict_time_count = 0
 
-        client.publish("person", json.dumps({"count": current_count,
-                                             "total": total_count}))
+        # if predict_time_count >= 5:
+        #     last_count = current_count
+        #     predict_time_count = 0
+
+        client.publish("person", json.dumps({"count": real_count}))
 
         ### Draw bounding boxes to provide intuition ###
         img = draw_bboxes(frame, detections)
         cv2.putText(img,
-            f'current: {current_count} total: {total_count}',
+            f'current: {real_count} total: {total_count}',
             (0, 100),
             cv2.FONT_HERSHEY_SIMPLEX,
             .5,
